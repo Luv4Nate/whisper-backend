@@ -1,30 +1,21 @@
 /**
  * Whisper.cc Backend Server
- * Handles: Stripe payments, license key generation, Nodemailer/Gmail email delivery, key validation
+ * Handles: Stripe payments, license key generation, Brevo email delivery, key validation
  *
  * Setup:
- *   npm install express stripe nodemailer cors dotenv
+ *   npm install express stripe cors dotenv
  *   node server.js
  */
 
 require('dotenv').config();
-const express      = require('express');
-const Stripe       = require('stripe');
-const nodemailer   = require('nodemailer');
-const cors         = require('cors');
-const crypto       = require('crypto');
+const express = require('express');
+const Stripe  = require('stripe');
+const cors    = require('cors');
+const crypto  = require('crypto');
+const https   = require('https');
 
 const app    = express();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-
-// ── Gmail / Nodemailer transporter ──
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.GMAIL_USER,      // e.g. you@gmail.com
-    pass: process.env.GMAIL_APP_PASS,  // 16-char App Password (no spaces)
-  },
-});
 
 app.use(cors({
   origin: 'https://whispercc.vercel.app',
@@ -35,8 +26,7 @@ app.use(cors({
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
-// ── In-memory license store (replace with a real DB for production) ──
-// Structure: { [licenseKey]: { email, createdAt } }
+// ── In-memory license store ──
 const licenseStore = {};
 
 // ── Generate a Whisper-style license key ──
@@ -45,14 +35,13 @@ function generateLicenseKey() {
   return `WSP-${seg()}-${seg()}-${seg()}-${seg()}`;
 }
 
-// ── Send license email via Gmail ──
+// ── Send license email via Brevo HTTP API ──
 async function sendLicenseEmail(email, licenseKey) {
-  await transporter.sendMail({
-    from:    `"Whisper.cc" <${process.env.GMAIL_USER}>`,
-    to:      email,
-    subject: 'Whisper.cc — Your License Key',
-    html: `
-<!DOCTYPE html>
+  const payload = JSON.stringify({
+    sender:      { name: 'Whisper.cc', email: process.env.BREVO_SENDER_EMAIL },
+    to:          [{ email }],
+    subject:     'Whisper.cc — Your License Key',
+    htmlContent: `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8"/>
@@ -97,6 +86,32 @@ async function sendLicenseEmail(email, licenseKey) {
   </div>
 </body>
 </html>`,
+  });
+
+  return new Promise((resolve, reject) => {
+    const request = https.request({
+      hostname: 'api.brevo.com',
+      path:     '/v3/smtp/email',
+      method:   'POST',
+      headers: {
+        'Content-Type':   'application/json',
+        'api-key':        process.env.BREVO_API_KEY,
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    }, (res) => {
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(data);
+        } else {
+          reject(new Error(`Brevo API error ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+    request.on('error', reject);
+    request.write(payload);
+    request.end();
   });
 }
 
@@ -153,7 +168,7 @@ app.post('/webhook', async (req, res) => {
       await sendLicenseEmail(email, key);
       console.log(`✓ Email sent to ${email}`);
     } catch (err) {
-      console.error('Nodemailer error:', err.message);
+      console.error('Brevo error:', err.message);
     }
   }
 

@@ -26,7 +26,10 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-app.use(cors());
+app.use(cors({
+  origin: 'https://whispercc.vercel.app',
+  methods: ['GET', 'POST'],
+}));
 
 // Raw body needed for Stripe webhook signature verification
 app.use('/webhook', express.raw({ type: 'application/json' }));

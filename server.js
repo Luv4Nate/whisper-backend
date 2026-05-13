@@ -18,7 +18,7 @@ const app    = express();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-app.use(cors({ origin: process.env.SITE_ORIGIN || '*' }));
+app.use(cors());
 
 // Raw body needed for Stripe webhook signature verification
 app.use('/webhook', express.raw({ type: 'application/json' }));

@@ -1,22 +1,30 @@
 /**
  * Whisper.cc Backend Server
- * Handles: Stripe payments, license key generation, Resend email delivery, key validation
+ * Handles: Stripe payments, license key generation, Nodemailer/Gmail email delivery, key validation
  *
  * Setup:
- *   npm install express stripe resend cors dotenv uuid
+ *   npm install express stripe nodemailer cors dotenv
  *   node server.js
  */
 
 require('dotenv').config();
-const express    = require('express');
-const Stripe     = require('stripe');
-const { Resend } = require('resend');
-const cors       = require('cors');
-const crypto     = require('crypto');
+const express      = require('express');
+const Stripe       = require('stripe');
+const nodemailer   = require('nodemailer');
+const cors         = require('cors');
+const crypto       = require('crypto');
 
 const app    = express();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-const resend = new Resend(process.env.RESEND_API_KEY);
+
+// ── Gmail / Nodemailer transporter ──
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,      // e.g. you@gmail.com
+    pass: process.env.GMAIL_APP_PASS,  // 16-char App Password (no spaces)
+  },
+});
 
 app.use(cors());
 
@@ -34,10 +42,10 @@ function generateLicenseKey() {
   return `WSP-${seg()}-${seg()}-${seg()}-${seg()}`;
 }
 
-// ── Send license email via Resend ──
+// ── Send license email via Gmail ──
 async function sendLicenseEmail(email, licenseKey) {
-  await resend.emails.send({
-    from: 'Whisper.cc <onboarding@resend.dev>',
+  await transporter.sendMail({
+    from:    `"Whisper.cc" <${process.env.GMAIL_USER}>`,
     to:      email,
     subject: 'Whisper.cc — Your License Key',
     html: `
@@ -142,7 +150,7 @@ app.post('/webhook', async (req, res) => {
       await sendLicenseEmail(email, key);
       console.log(`✓ Email sent to ${email}`);
     } catch (err) {
-      console.error('Resend error:', err);
+      console.error('Nodemailer error:', err.message);
     }
   }
 
